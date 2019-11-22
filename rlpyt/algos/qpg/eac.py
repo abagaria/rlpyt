@@ -27,18 +27,19 @@ SamplesToBuffer = namedarraytuple("SamplesToBuffer",
 
 
 class EAC(RlAlgorithm):
-    """TO BE DEPRECATED."""
 
     opt_info_fields = tuple(f for f in OptInfo._fields)  # copy
 
     def __init__(
             self,
             discount=0.99,
+			alpha=10,
+			beta=0.1,
             batch_size=256,
             min_steps_learn=int(1e4),
             replay_size=int(5e5),
             replay_ratio=256,  # data_consumption / data_generation
-            target_update_tau=0.005,  # tau=1 for hard update.
+            target_update_tau=0.01,  # tau=1 for hard update.
             target_update_interval=1,  # 1000 for hard update, 1 for soft.
             learning_rate=3e-4,
             OptimCls=torch.optim.Adam,
@@ -58,6 +59,8 @@ class EAC(RlAlgorithm):
         assert action_prior in ["uniform", "gaussian"]
         self._batch_size = batch_size
         del batch_size  # Property.
+		self._alpha = alpha
+		self._beta = beta
         save__init__args(locals())
 
     def initialize(self, agent, n_itr, batch_spec, mid_batch_reset, examples,
@@ -102,6 +105,10 @@ class EAC(RlAlgorithm):
             lr=self.learning_rate, **self.optim_kwargs)
         self.v_optimizer = self.OptimCls(self.agent.v_parameters(),
             lr=self.learning_rate, **self.optim_kwargs)
+		self.inv_optimizer = self.OptimCls(self.agent.inv_parameters(),
+            lr=self.learning_rate, **self.optim_kwargs)
+		self.trans_optimizer = self.OptimCls(self.agent.trans_parameters(),
+            lr=self.learning_rate, **self.optim_kwargs)
         if self.initial_optim_state_dict is not None:
             self.load_optim_state_dict(self.initial_optim_state_dict)
         if self.action_prior == "gaussian":
@@ -140,7 +147,7 @@ class EAC(RlAlgorithm):
         for _ in range(self.updates_per_optimize):
             samples_from_replay = self.replay_buffer.sample_batch(self.batch_size)
             losses, values = self.loss(samples_from_replay)
-            q1_loss, q2_loss, v_loss, pi_loss = losses
+            q1_loss, q2_loss, v_loss, pi_loss, inv_loss, trans_loss = losses
 
             self.v_optimizer.zero_grad()
             v_loss.backward()
@@ -167,7 +174,22 @@ class EAC(RlAlgorithm):
                 self.clip_grad_norm)
             self.q2_optimizer.step()
 
-            grad_norms = (q1_grad_norm, q2_grad_norm, v_grad_norm, pi_grad_norm)
+			#inverse dynamics optimizer
+			self.inv_optimizer.zero_grad()
+			inv_loss.backward()
+			#do we need to do clipping?
+			inv_grad_norm = torch.nn.utils.clip_grad_norm_(self.agent.inv_parameters(), self.clip_grad_norm) 
+			self.inv_optimizer.step()
+
+
+			#transition dynamics optimizer
+			self.trans_optimizer.zero_grad()
+			trans_loss.backward()
+			#do we need to do clipping?
+			trans_grad_norm = torch.nn.utils.clip_grad_norm_(self.agent.trans_parameters(), self.clip_grad_norm)
+			self.trans_optimizer.step()
+
+            grad_norms = (q1_grad_norm, q2_grad_norm, v_grad_norm, pi_grad_norm, inv_grad_norm, trans_grad_norm)
 
             self.append_opt_info_(opt_info, losses, grad_norms, values)
             self.update_counter += 1
@@ -192,7 +214,7 @@ class EAC(RlAlgorithm):
         with torch.no_grad():
             target_v = self.agent.target_v(*target_inputs)
         disc = self.discount ** self.n_step_return
-        y = (self.reward_scale * samples.return_ +
+        y = (self._alpha * self.reward_scale * samples.return_ +
             (1 - samples.done_n.float()) * disc * target_v)
         if self.mid_batch_reset and not self.agent.recurrent:
             valid = torch.ones_like(samples.done, dtype=torch.float)
@@ -214,19 +236,28 @@ class EAC(RlAlgorithm):
         log_target1, log_target2 = self.agent.q(*agent_inputs, new_action)
         min_log_target = torch.min(log_target1, log_target2)
         prior_log_pi = self.get_action_prior(new_action.cpu())
-        v_target = (min_log_target - log_pi + prior_log_pi).detach()  # No grad.
+
+		next_state, log_trans, _ = self.agent.trans(*agent_inputs)
+		_, log_inv = self.agent.inv(*agent_inputs, next_state)
+		 
+        v_target = (min_log_target + self._beta * log_inv - self._beta * (log_pi - prior_log_pi)s).detach()  # No grad.
 
         v_loss = 0.5 * valid_mean((v - v_target) ** 2, valid)
 
         if self.reparameterize:
-            pi_losses = log_pi - min_log_target
-        else:
+            pi_losses = self._beta* log_pi - self._beta * log_inv - min_log_target
+        else: #don't care this now
             pi_factor = (v - v_target).detach()
             pi_losses = log_pi * pi_factor
         if self.policy_output_regularization > 0:
             pi_losses += self.policy_output_regularization * torch.mean(
                 0.5 * pi_mean ** 2 + 0.5 * pi_log_std ** 2, dim=-1)
         pi_loss = valid_mean(pi_losses, valid)
+
+		#inverse loss
+		
+		
+		#transition loss
 
         losses = (q1_loss, q2_loss, v_loss, pi_loss)
         values = tuple(val.detach() for val in (q1, q2, v, pi_mean, pi_log_std))

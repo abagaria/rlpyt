@@ -144,16 +144,16 @@ class EacAgent(BaseAgent):
 		model_inputs = buffer_to((observation, prev_action, prev_reward, next_observation), device=self.device)
 		mean, log_std = self.inv_model(*model_inputs)
 		dist_info = DistInfoStd(mean=mean, log_std=log_std)
-        log_inv = self.distribution.log_likelihood(prev_action, dist_info)
-		return log_inv.cpu()
+        action, log_inv = self.distribution.sample_loglikelihood(dist_info)
+		return action, log_inv, dist_info
 	
 	#transition dynamics
-	def transition(self, observation, prev_action, prev_reward, next_observation):
+	def transition(self, observation, prev_action, prev_reward):
 		model_inputs = buffer_to((observation, prev_action, prev_reward), device=self.device)
 		mean, log_std = self.trans_model(*model_inputs)
 		dist_info = DistInfoStd(mean=mean, log_std=log_std)
-		log_trans = self.distribution.log_likelihood(next_observation, dist_info)
-		return log_trans.cpu()
+		state, log_trans = self.distribution.sample_loglikelihood(dist_info)
+		return state, log_trans, dist_info
 
     @torch.no_grad()
     def step(self, observation, prev_action, prev_reward):
