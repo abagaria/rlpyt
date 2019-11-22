@@ -22,17 +22,20 @@ AgentInfo = namedarraytuple("AgentInfo", ["dist_info"])
 Models = namedtuple("Models", ["pi", "q1", "q2", "v"])
 
 
-class SacAgent(BaseAgent):
-    """TO BE DEPRECATED."""
+class EacAgent(BaseAgent):
 
     def __init__(
             self,
             ModelCls=PiMlpModel,  # Pi model.
             QModelCls=QofMuMlpModel,
             VModelCls=VMlpModel,
+			InverseModelCls=InverseDynamicsMlpModel, #Inverse Dynamics Model
+			TransitionModelCls=TransitionMlpModel, #Transition Dynamics Model
             model_kwargs=None,  # Pi model.
             q_model_kwargs=None,
             v_model_kwargs=None,
+			inv_model_kwargs=None,
+			trans_model_kwargs=None,
             initial_model_state_dict=None,  # All models.
             action_squash=1.,  # Max magnitude (or None).
             pretrain_std=0.75,  # With squash 0.75 is near uniform.
@@ -43,6 +46,10 @@ class SacAgent(BaseAgent):
             q_model_kwargs = dict(hidden_sizes=[256, 256])
         if v_model_kwargs is None:
             v_model_kwargs = dict(hidden_sizes=[256, 256])
+		if inv_model_kwargs is None:
+			inv_model_kwargs = dict(hidden_sizes=[256, 256, 256])
+		if trans_model_kwargs is None:
+			trans_model_kwargs = dict(hidden_sizes=[256, 256, 256])
         super().__init__(ModelCls=ModelCls, model_kwargs=model_kwargs,
             initial_model_state_dict=initial_model_state_dict)
         save__init__args(locals())
@@ -61,6 +68,9 @@ class SacAgent(BaseAgent):
         self.target_v_model = self.VModelCls(**self.env_model_kwargs,
             **self.v_model_kwargs)
         self.target_v_model.load_state_dict(self.v_model.state_dict())
+		#inverse dynamics and transition dynamics initialization
+		self.inv_model = self.InverseModelCls(**self.env_model_kwargs, **self.inv_model_kwargs)
+		self.trans_model = self.TransitionModelCls(**self.env_model_kwargs, **self.trans_model_kwargs)
         if self.initial_model_state_dict is not None:
             self.load_state_dict(self.initial_model_state_dict)
         assert len(env_spaces.action.shape) == 1
@@ -77,6 +87,8 @@ class SacAgent(BaseAgent):
         self.q2_model.to(self.device)
         self.v_model.to(self.device)
         self.target_v_model.to(self.device)
+		self.inv_model.to(self.device) # inverse
+		self.trans_model.to(self.device) #transition
 
     def data_parallel(self):
         super().data_parallel
@@ -84,6 +96,8 @@ class SacAgent(BaseAgent):
         self.q1_model = DDP_WRAP(self.q1_model)
         self.q2_model = DDP_WRAP(self.q2_model)
         self.v_model = DDP_WRAP(self.v_model)
+		self.inv_model = DDP_WRAP(self.inv_model)
+		self.trans_model = DDP_WRAP(self.inv_model)
 
     def give_min_itr_learn(self, min_itr_learn):
         self.min_itr_learn = min_itr_learn  # From algo.
@@ -124,6 +138,17 @@ class SacAgent(BaseAgent):
             device=self.device)
         target_v = self.target_v_model(*model_inputs)
         return target_v.cpu()
+
+	#inverse dynamics
+	def inv(self, observation, prev_action, prev_reward, next_observation):
+		model_inputs = buffer_to((observation, prev_action, prev_reward, next_observation), device=self.device)
+		
+		pass
+	
+	#transition dynamics
+	def transition(self, observation, prev_action, prev_reward):
+		model_inputs = buffer_to((observation, prev_action, prev_reward), device=self.device)
+		pass
 
     @torch.no_grad()
     def step(self, observation, prev_action, prev_reward):
