@@ -19,7 +19,7 @@ MIN_LOG_STD = -20
 MAX_LOG_STD = 2
 
 AgentInfo = namedarraytuple("AgentInfo", ["dist_info"])
-Models = namedtuple("Models", ["pi", "q1", "q2", "v"])
+Models = namedtuple("Models", ["pi", "q1", "q2", "v", "inv", "trans"])
 
 
 class EacAgent(BaseAgent):
@@ -142,13 +142,18 @@ class EacAgent(BaseAgent):
 	#inverse dynamics
 	def inv(self, observation, prev_action, prev_reward, next_observation):
 		model_inputs = buffer_to((observation, prev_action, prev_reward, next_observation), device=self.device)
-		
-		pass
+		mean, log_std = self.inv_model(*model_inputs)
+		dist_info = DistInfoStd(mean=mean, log_std=log_std)
+        log_inv = self.distribution.log_likelihood(prev_action, dist_info)
+		return log_inv.cpu()
 	
 	#transition dynamics
-	def transition(self, observation, prev_action, prev_reward):
+	def transition(self, observation, prev_action, prev_reward, next_observation):
 		model_inputs = buffer_to((observation, prev_action, prev_reward), device=self.device)
-		pass
+		mean, log_std = self.trans_model(*model_inputs)
+		dist_info = DistInfoStd(mean=mean, log_std=log_std)
+		log_trans = self.distribution.log_likelihood(next_observation, dist_info)
+		return log_trans.cpu()
 
     @torch.no_grad()
     def step(self, observation, prev_action, prev_reward):
@@ -167,7 +172,7 @@ class EacAgent(BaseAgent):
     @property
     def models(self):
         return Models(pi=self.model, q1=self.q1_model, q2=self.q2_model,
-            v=self.v_model)
+            v=self.v_model,inv=self.inv_model, trans=self.trans_model)
 
     def pi_parameters(self):
         return self.model.parameters()
@@ -181,17 +186,27 @@ class EacAgent(BaseAgent):
     def v_parameters(self):
         return self.v_model.parameters()
 
+	def inv_parameters(self):
+		return self.inv_model.parameters()
+
+	def trans_parameters(self):
+		return self.trans_model.parameters()
+
     def train_mode(self, itr):
         super().train_mode(itr)
         self.q1_model.train()
         self.q2_model.train()
         self.v_model.train()
+		self.inv_model.train()
+		self.trans_model.train()
 
     def sample_mode(self, itr):
         super().sample_mode(itr)
         self.q1_model.eval()
         self.q2_model.eval()
         self.v_model.eval()
+		self.inv_model.eval()
+		self.trans_model.eval()
         if itr == 0:
             logger.log(f"Agent at itr {itr}, sample std: {self.pretrain_std}")
         if itr == self.min_itr_learn:
@@ -204,6 +219,8 @@ class EacAgent(BaseAgent):
         self.q1_model.eval()
         self.q2_model.eval()
         self.v_model.eval()
+		self.inv_model.eval()
+		self.trans_model.eval()
         self.distribution.set_std(0.)  # Deterministic (dist_info std ignored).
 
     def state_dict(self):
@@ -213,6 +230,8 @@ class EacAgent(BaseAgent):
             q2_model=self.q2_model.state_dict(),
             v_model=self.v_model.state_dict(),
             target_v_model=self.target_v_model.state_dict(),
+			inv_model=self.inv_model.state_dict(),
+			trans_model=self.trans_model.state_dict(),
         )
 
     def load_state_dict(self, state_dict):
@@ -221,3 +240,5 @@ class EacAgent(BaseAgent):
         self.q2_model.load_state_dict(state_dict["q2_model"])
         self.v_model.load_state_dict(state_dict["v_model"])
         self.target_v_model.load_state_dict(state_dict["target_v_model"])
+		self.inv_model.load_state_dict(state_dict["inv_model"])
+		self.trans_model.load_state_dict(state_dict["trans_model"])

@@ -81,10 +81,11 @@ class InverseDynamicsMlpModel(torch.nn.Module):
 
 #implementation of transition model 
 class TransitionMlpModel(torch.nn.Module):
-	def __init__(self, observation_shape, hidden_sizes, action_size,):
+	def __init__(self, observation_shape, hidden_sizes, action_size, std=1e-5):
 		super().__init__()
 		self._obs_ndim = len(observation_shape)
         self._action_size = action_size
+		self.log_std = torch.log(std) * torch.ones(action_size, 1)
         self.mlp = MlpModel(
             input_size=int(np.prod(observation_shape)) + action_size,
             hidden_sizes=hidden_sizes,
@@ -96,7 +97,7 @@ class TransitionMlpModel(torch.nn.Module):
 		T_input = torch.cat([observation.view(T * B, -1), action.view(T * B, -1)], dim=1)
 		t = self.mlp(T_input)
 		t = restore_leading_dims(t, lead_dim, T, B)
-		return t
+		return t, self.log_std
 
 class QofMuMlpModel(torch.nn.Module):
 
