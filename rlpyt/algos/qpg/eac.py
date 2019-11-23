@@ -19,8 +19,8 @@ from rlpyt.algos.utils import valid_from_done
 
 
 OptInfo = namedtuple("OptInfo",
-    ["q1Loss", "q2Loss", "vLoss", "piLoss",
-    "q1GradNorm", "q2GradNorm", "vGradNorm", "piGradNorm",
+    ["q1Loss", "q2Loss", "vLoss", "piLoss", "invLoss", "transLoss",
+    "q1GradNorm", "q2GradNorm", "vGradNorm", "piGradNorm", "invGradNorm", "transGradNorm",
     "q1", "q2", "v", "piMu", "piLogStd", "qMeanDiff"])
 SamplesToBuffer = namedarraytuple("SamplesToBuffer",
     ["observation", "action", "reward", "done", "timeout"])
@@ -33,8 +33,8 @@ class EAC(RlAlgorithm):
     def __init__(
             self,
             discount=0.99,
-			alpha=10,
-			beta=0.1,
+            alpha=10,
+            beta=0.1,
             batch_size=256,
             min_steps_learn=int(1e4),
             replay_size=int(5e5),
@@ -59,8 +59,8 @@ class EAC(RlAlgorithm):
         assert action_prior in ["uniform", "gaussian"]
         self._batch_size = batch_size
         del batch_size  # Property.
-		self._alpha = alpha
-		self._beta = beta
+        self._alpha = alpha
+        self._beta = beta
         save__init__args(locals())
 
     def initialize(self, agent, n_itr, batch_spec, mid_batch_reset, examples,
@@ -105,15 +105,14 @@ class EAC(RlAlgorithm):
             lr=self.learning_rate, **self.optim_kwargs)
         self.v_optimizer = self.OptimCls(self.agent.v_parameters(),
             lr=self.learning_rate, **self.optim_kwargs)
-		self.inv_optimizer = self.OptimCls(self.agent.inv_parameters(),
+        self.inv_optimizer = self.OptimCls(self.agent.inv_parameters(),
             lr=self.learning_rate, **self.optim_kwargs)
-		self.trans_optimizer = self.OptimCls(self.agent.trans_parameters(),
+        self.trans_optimizer = self.OptimCls(self.agent.trans_parameters(),
             lr=self.learning_rate, **self.optim_kwargs)
         if self.initial_optim_state_dict is not None:
             self.load_optim_state_dict(self.initial_optim_state_dict)
         if self.action_prior == "gaussian":
-            self.action_prior_distribution = Gaussian(
-                dim=self.agent.env_spaces.action.size, std=1.)
+            self.action_prior_distribution = Gaussian(dim=self.agent.env_spaces.action.size, std=1.)
 
     def initialize_replay_buffer(self, examples, batch_spec, async_=False):
         example_to_buffer = SamplesToBuffer(
@@ -174,20 +173,19 @@ class EAC(RlAlgorithm):
                 self.clip_grad_norm)
             self.q2_optimizer.step()
 
-			#inverse dynamics optimizer
-			self.inv_optimizer.zero_grad()
-			inv_loss.backward()
-			#do we need to do clipping?
-			inv_grad_norm = torch.nn.utils.clip_grad_norm_(self.agent.inv_parameters(), self.clip_grad_norm) 
-			self.inv_optimizer.step()
+            #inverse dynamics optimizer
+            self.inv_optimizer.zero_grad()
+            inv_loss.backward()
+            #do we need to do clipping?
+            inv_grad_norm = torch.nn.utils.clip_grad_norm_(self.agent.inv_parameters(), self.clip_grad_norm)
+            self.inv_optimizer.step()
 
-
-			#transition dynamics optimizer
-			self.trans_optimizer.zero_grad()
-			trans_loss.backward()
-			#do we need to do clipping?
-			trans_grad_norm = torch.nn.utils.clip_grad_norm_(self.agent.trans_parameters(), self.clip_grad_norm)
-			self.trans_optimizer.step()
+            #transition dynamics optimizer
+            self.trans_optimizer.zero_grad()
+            trans_loss.backward()
+            #do we need to do clipping?
+            trans_grad_norm = torch.nn.utils.clip_grad_norm_(self.agent.trans_parameters(), self.clip_grad_norm)
+            self.trans_optimizer.step()
 
             grad_norms = (q1_grad_norm, q2_grad_norm, v_grad_norm, pi_grad_norm, inv_grad_norm, trans_grad_norm)
 
@@ -230,23 +228,23 @@ class EAC(RlAlgorithm):
         q2_loss = 0.5 * valid_mean((y - q2) ** 2, valid)
 
         v = self.agent.v(*agent_inputs)
-        new_action, log_pi, (pi_mean, pi_log_std) = self.agent.pi(*agent_inputs)
+        new_action, log_pi, pi_mean, pi_log_std = self.agent.pi(*agent_inputs)
         if not self.reparameterize:
             new_action = new_action.detach()  # No grad.
         log_target1, log_target2 = self.agent.q(*agent_inputs, new_action)
         min_log_target = torch.min(log_target1, log_target2)
         prior_log_pi = self.get_action_prior(new_action.cpu())
 
-		next_state, log_trans, _ = self.agent.trans(*agent_inputs)
-		_, log_inv = self.agent.inv(*agent_inputs, next_state)
-		 
-        v_target = (min_log_target + self._beta * log_inv - self._beta * (log_pi - prior_log_pi)s).detach()  # No grad.
+        sampled_next_state, sampled_log_trans, _ = self.agent.transition_sampled(*agent_inputs, new_action)
+        _, log_inv = self.agent.inv(*agent_inputs, sampled_next_state)
+
+        v_target = (min_log_target + self._beta * log_inv - self._beta * (log_pi - prior_log_pi)).detach()  # No grad.
 
         v_loss = 0.5 * valid_mean((v - v_target) ** 2, valid)
 
         if self.reparameterize:
-            pi_losses = self._beta* log_pi - self._beta * log_inv - min_log_target
-        else: #don't care this now
+            pi_losses = self._beta * log_pi - self._beta * log_inv - min_log_target
+        else: #don't mind this now
             pi_factor = (v - v_target).detach()
             pi_losses = log_pi * pi_factor
         if self.policy_output_regularization > 0:
@@ -254,12 +252,15 @@ class EAC(RlAlgorithm):
                 0.5 * pi_mean ** 2 + 0.5 * pi_log_std ** 2, dim=-1)
         pi_loss = valid_mean(pi_losses, valid)
 
-		#inverse loss
-		
-		
-		#transition loss
+        #inverse loss
 
-        losses = (q1_loss, q2_loss, v_loss, pi_loss)
+        inv_loss = valid_mean(-log_inv, valid)
+
+        #transition loss
+        log_prob_trans, _ = self.agent.transition(*agent_inputs, *target_inputs)
+        trans_loss = valid_mean(-log_prob_trans, valid)
+
+        losses = (q1_loss, q2_loss, v_loss, pi_loss, inv_loss, trans_loss)
         values = tuple(val.detach() for val in (q1, q2, v, pi_mean, pi_log_std))
         return losses, values
 
@@ -364,17 +365,21 @@ class EAC(RlAlgorithm):
 
     def append_opt_info_(self, opt_info, losses, grad_norms, values):
         """In-place."""
-        q1_loss, q2_loss, v_loss, pi_loss = losses
-        q1_grad_norm, q2_grad_norm, v_grad_norm, pi_grad_norm = grad_norms
+        q1_loss, q2_loss, v_loss, pi_loss, inv_loss, trans_loss = losses
+        q1_grad_norm, q2_grad_norm, v_grad_norm, pi_grad_norm, inv_grad_norm, trans_grad_norm = grad_norms
         q1, q2, v, pi_mean, pi_log_std = values
         opt_info.q1Loss.append(q1_loss.item())
         opt_info.q2Loss.append(q2_loss.item())
         opt_info.vLoss.append(v_loss.item())
         opt_info.piLoss.append(pi_loss.item())
+        opt_info.invLoss(inv_loss.item())
+        opt_info.transLoss(trans_loss.item())
         opt_info.q1GradNorm.append(q1_grad_norm)
         opt_info.q2GradNorm.append(q2_grad_norm)
         opt_info.vGradNorm.append(v_grad_norm)
         opt_info.piGradNorm.append(pi_grad_norm)
+        opt_info.invGradNorm.append(inv_grad_norm)
+        opt_info.transGradNorm.append(trans_grad_norm)
         opt_info.q1.extend(q1[::10].numpy())  # Downsample for stats.
         opt_info.q2.extend(q2[::10].numpy())
         opt_info.v.extend(v[::10].numpy())
@@ -388,6 +393,8 @@ class EAC(RlAlgorithm):
             q1_optimizer=self.q1_optimizer.state_dict(),
             q2_optimizer=self.q2_optimizer.state_dict(),
             v_optimizer=self.v_optimizer.state_dict(),
+            inv_optimizer=self.inv_optimizer.state_dict(),
+            trans_optimizer=self.trans_optimizer.state_dict()
         )
 
     def load_optim_state_dict(self, state_dict):
@@ -395,3 +402,5 @@ class EAC(RlAlgorithm):
         self.q1_optimizer.load_state_dict(state_dict["q1_optimizer"])
         self.q2_optimizer.load_state_dict(state_dict["q2_optimizer"])
         self.v_optimizer.load_state_dict(state_dict["v_optimizer"])
+        self.inv_optimizer.load_state_dict(state_dict["inv_optimizer"])
+        self.trans_optimizer.load_state_dict(state_dict["trans_optimizer"])

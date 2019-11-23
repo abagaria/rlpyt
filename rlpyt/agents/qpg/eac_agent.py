@@ -6,7 +6,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.nn.parallel import DistributedDataParallelCPU as DDPC
 
 from rlpyt.agents.base import BaseAgent, AgentStep
-from rlpyt.models.qpg.mlp import QofMuMlpModel, VMlpModel, PiMlpModel
+from rlpyt.models.qpg.mlp import QofMuMlpModel, VMlpModel, PiMlpModel, TransitionMlpModel, InverseDynamicsMlpModel
 from rlpyt.utils.quick_args import save__init__args
 from rlpyt.distributions.gaussian import Gaussian, DistInfoStd
 from rlpyt.utils.buffer import buffer_to
@@ -29,13 +29,13 @@ class EacAgent(BaseAgent):
             ModelCls=PiMlpModel,  # Pi model.
             QModelCls=QofMuMlpModel,
             VModelCls=VMlpModel,
-			InverseModelCls=InverseDynamicsMlpModel, #Inverse Dynamics Model
-			TransitionModelCls=TransitionMlpModel, #Transition Dynamics Model
+            InverseModelCls=InverseDynamicsMlpModel, #Inverse Dynamics Model
+            TransitionModelCls=TransitionMlpModel, #Transition Dynamics Model
             model_kwargs=None,  # Pi model.
             q_model_kwargs=None,
             v_model_kwargs=None,
-			inv_model_kwargs=None,
-			trans_model_kwargs=None,
+            inv_model_kwargs=None,
+            trans_model_kwargs=None,
             initial_model_state_dict=None,  # All models.
             action_squash=1.,  # Max magnitude (or None).
             pretrain_std=0.75,  # With squash 0.75 is near uniform.
@@ -46,10 +46,10 @@ class EacAgent(BaseAgent):
             q_model_kwargs = dict(hidden_sizes=[256, 256])
         if v_model_kwargs is None:
             v_model_kwargs = dict(hidden_sizes=[256, 256])
-		if inv_model_kwargs is None:
-			inv_model_kwargs = dict(hidden_sizes=[256, 256, 256])
-		if trans_model_kwargs is None:
-			trans_model_kwargs = dict(hidden_sizes=[256, 256, 256])
+        if inv_model_kwargs is None:
+            inv_model_kwargs = dict(hidden_sizes=[256, 256, 256])
+        if trans_model_kwargs is None:
+            trans_model_kwargs = dict(hidden_sizes=[256, 256, 256])
         super().__init__(ModelCls=ModelCls, model_kwargs=model_kwargs,
             initial_model_state_dict=initial_model_state_dict)
         save__init__args(locals())
@@ -68,9 +68,9 @@ class EacAgent(BaseAgent):
         self.target_v_model = self.VModelCls(**self.env_model_kwargs,
             **self.v_model_kwargs)
         self.target_v_model.load_state_dict(self.v_model.state_dict())
-		#inverse dynamics and transition dynamics initialization
-		self.inv_model = self.InverseModelCls(**self.env_model_kwargs, **self.inv_model_kwargs)
-		self.trans_model = self.TransitionModelCls(**self.env_model_kwargs, **self.trans_model_kwargs)
+        #inverse dynamics and transition dynamics initialization
+        self.inv_model = self.InverseModelCls(**self.env_model_kwargs, **self.inv_model_kwargs)
+        self.trans_model = self.TransitionModelCls(**self.env_model_kwargs, **self.trans_model_kwargs)
         if self.initial_model_state_dict is not None:
             self.load_state_dict(self.initial_model_state_dict)
         assert len(env_spaces.action.shape) == 1
@@ -87,8 +87,8 @@ class EacAgent(BaseAgent):
         self.q2_model.to(self.device)
         self.v_model.to(self.device)
         self.target_v_model.to(self.device)
-		self.inv_model.to(self.device) # inverse
-		self.trans_model.to(self.device) #transition
+        self.inv_model.to(self.device) # inverse
+        self.trans_model.to(self.device) #transition
 
     def data_parallel(self):
         super().data_parallel
@@ -96,8 +96,8 @@ class EacAgent(BaseAgent):
         self.q1_model = DDP_WRAP(self.q1_model)
         self.q2_model = DDP_WRAP(self.q2_model)
         self.v_model = DDP_WRAP(self.v_model)
-		self.inv_model = DDP_WRAP(self.inv_model)
-		self.trans_model = DDP_WRAP(self.inv_model)
+        self.inv_model = DDP_WRAP(self.inv_model)
+        self.trans_model = DDP_WRAP(self.inv_model)
 
     def give_min_itr_learn(self, min_itr_learn):
         self.min_itr_learn = min_itr_learn  # From algo.
@@ -139,21 +139,29 @@ class EacAgent(BaseAgent):
         target_v = self.target_v_model(*model_inputs)
         return target_v.cpu()
 
-	#inverse dynamics
-	def inv(self, observation, prev_action, prev_reward, next_observation):
-		model_inputs = buffer_to((observation, prev_action, prev_reward, next_observation), device=self.device)
-		mean, log_std = self.inv_model(*model_inputs)
-		dist_info = DistInfoStd(mean=mean, log_std=log_std)
+    #inverse dynamics
+    def inv(self, observation, prev_action, prev_reward, next_observation):
+        model_inputs = buffer_to((observation, prev_action, prev_reward, next_observation), device=self.device)
+        mean, log_std = self.inv_model(*model_inputs)
+        dist_info = DistInfoStd(mean=mean, log_std=log_std)
         action, log_inv = self.distribution.sample_loglikelihood(dist_info)
-		return action, log_inv, dist_info
-	
-	#transition dynamics
-	def transition(self, observation, prev_action, prev_reward):
-		model_inputs = buffer_to((observation, prev_action, prev_reward), device=self.device)
-		mean, log_std = self.trans_model(*model_inputs)
-		dist_info = DistInfoStd(mean=mean, log_std=log_std)
-		state, log_trans = self.distribution.sample_loglikelihood(dist_info)
-		return state, log_trans, dist_info
+        return action, log_inv, dist_info
+
+    #transition dynamics
+    def transition(self, observation, prev_action, prev_reward, next_observation, next_action, next_reward):
+        model_inputs = buffer_to((observation, prev_action, prev_reward), device=self.device)
+        mean, log_std = self.trans_model(*model_inputs)
+        dist_info = DistInfoStd(mean=mean, log_std=log_std)
+        #sample_state, sample_log_trans = self.distribution.sample_loglikelihood(dist_info)
+        log_transition_prob = self.distribution.log_likelihood(next_observation, dist_info)
+        return log_transition_prob, dist_info
+
+    def transition_sample(observation, prev_action, prev_reward, action):
+        model_inputs = buffer_to((observation, action, prev_reward), device=self.device)
+        mean, log_std = self.trans_model(*model_inputs)
+        dist_info = DistInfoStd(mean=mean, log_std=log_std)
+        sample_state, sample_log_trans = self.distribution.sample_loglikelihood(dist_info)
+        return sample_state, sample_log_trans, dist_info
 
     @torch.no_grad()
     def step(self, observation, prev_action, prev_reward):
@@ -186,27 +194,27 @@ class EacAgent(BaseAgent):
     def v_parameters(self):
         return self.v_model.parameters()
 
-	def inv_parameters(self):
-		return self.inv_model.parameters()
+    def inv_parameters(self):
+        return self.inv_model.parameters()
 
-	def trans_parameters(self):
-		return self.trans_model.parameters()
+    def trans_parameters(self):
+        return self.trans_model.parameters()
 
     def train_mode(self, itr):
         super().train_mode(itr)
         self.q1_model.train()
         self.q2_model.train()
         self.v_model.train()
-		self.inv_model.train()
-		self.trans_model.train()
+        self.inv_model.train()
+        self.trans_model.train()
 
     def sample_mode(self, itr):
         super().sample_mode(itr)
         self.q1_model.eval()
         self.q2_model.eval()
         self.v_model.eval()
-		self.inv_model.eval()
-		self.trans_model.eval()
+        self.inv_model.eval()
+        self.trans_model.eval()
         if itr == 0:
             logger.log(f"Agent at itr {itr}, sample std: {self.pretrain_std}")
         if itr == self.min_itr_learn:
@@ -219,8 +227,8 @@ class EacAgent(BaseAgent):
         self.q1_model.eval()
         self.q2_model.eval()
         self.v_model.eval()
-		self.inv_model.eval()
-		self.trans_model.eval()
+        self.inv_model.eval()
+        self.trans_model.eval()
         self.distribution.set_std(0.)  # Deterministic (dist_info std ignored).
 
     def state_dict(self):
@@ -230,8 +238,8 @@ class EacAgent(BaseAgent):
             q2_model=self.q2_model.state_dict(),
             v_model=self.v_model.state_dict(),
             target_v_model=self.target_v_model.state_dict(),
-			inv_model=self.inv_model.state_dict(),
-			trans_model=self.trans_model.state_dict(),
+            inv_model=self.inv_model.state_dict(),
+            trans_model=self.trans_model.state_dict(),
         )
 
     def load_state_dict(self, state_dict):
@@ -240,5 +248,5 @@ class EacAgent(BaseAgent):
         self.q2_model.load_state_dict(state_dict["q2_model"])
         self.v_model.load_state_dict(state_dict["v_model"])
         self.target_v_model.load_state_dict(state_dict["target_v_model"])
-		self.inv_model.load_state_dict(state_dict["inv_model"])
-		self.trans_model.load_state_dict(state_dict["trans_model"])
+        self.inv_model.load_state_dict(state_dict["inv_model"])
+        self.trans_model.load_state_dict(state_dict["trans_model"])
