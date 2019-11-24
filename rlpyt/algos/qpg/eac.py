@@ -235,8 +235,8 @@ class EAC(RlAlgorithm):
         min_log_target = torch.min(log_target1, log_target2)
         prior_log_pi = self.get_action_prior(new_action.cpu())
 
-        sampled_next_state, sampled_log_trans, _ = self.agent.transition_sample(*agent_inputs, new_action)
-        _, log_inv, _ = self.agent.inv(*agent_inputs, sampled_next_state)
+        sampled_next_state, sampled_log_trans, _ = self.agent.transition_sample(*agent_inputs, new_action.detach())
+        _, log_inv, _ = self.agent.inv(*agent_inputs, sampled_next_state.detach())
 
         v_target = (min_log_target + self._beta * log_inv - self._beta * (log_pi - prior_log_pi)).detach()  # No grad.
 
