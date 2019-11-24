@@ -85,7 +85,8 @@ class TransitionMlpModel(torch.nn.Module):
         super().__init__()
         self._obs_ndim = len(observation_shape)
         self._action_size = action_size
-        self.log_std = np.log(std) * torch.ones(action_size, 1)
+        self.log_std = np.log(std) * torch.ones(int(np.prod(observation_shape)),)
+
         self.mlp = MlpModel(
             input_size=int(np.prod(observation_shape)) + action_size,
             hidden_sizes=hidden_sizes,

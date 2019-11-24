@@ -155,7 +155,7 @@ class EAC(RlAlgorithm):
             self.v_optimizer.step()
 
             self.pi_optimizer.zero_grad()
-            pi_loss.backward()
+            pi_loss.backward(retain_graph=True)
             pi_grad_norm = torch.nn.utils.clip_grad_norm_(self.agent.pi_parameters(),
                 self.clip_grad_norm)
             self.pi_optimizer.step()
@@ -228,15 +228,15 @@ class EAC(RlAlgorithm):
         q2_loss = 0.5 * valid_mean((y - q2) ** 2, valid)
 
         v = self.agent.v(*agent_inputs)
-        new_action, log_pi, pi_mean, pi_log_std = self.agent.pi(*agent_inputs)
+        new_action, log_pi, (pi_mean, pi_log_std) = self.agent.pi(*agent_inputs)
         if not self.reparameterize:
             new_action = new_action.detach()  # No grad.
         log_target1, log_target2 = self.agent.q(*agent_inputs, new_action)
         min_log_target = torch.min(log_target1, log_target2)
         prior_log_pi = self.get_action_prior(new_action.cpu())
 
-        sampled_next_state, sampled_log_trans, _ = self.agent.transition_sampled(*agent_inputs, new_action)
-        _, log_inv = self.agent.inv(*agent_inputs, sampled_next_state)
+        sampled_next_state, sampled_log_trans, _ = self.agent.transition_sample(*agent_inputs, new_action)
+        _, log_inv, _ = self.agent.inv(*agent_inputs, sampled_next_state)
 
         v_target = (min_log_target + self._beta * log_inv - self._beta * (log_pi - prior_log_pi)).detach()  # No grad.
 
@@ -366,14 +366,15 @@ class EAC(RlAlgorithm):
     def append_opt_info_(self, opt_info, losses, grad_norms, values):
         """In-place."""
         q1_loss, q2_loss, v_loss, pi_loss, inv_loss, trans_loss = losses
+
         q1_grad_norm, q2_grad_norm, v_grad_norm, pi_grad_norm, inv_grad_norm, trans_grad_norm = grad_norms
         q1, q2, v, pi_mean, pi_log_std = values
         opt_info.q1Loss.append(q1_loss.item())
         opt_info.q2Loss.append(q2_loss.item())
         opt_info.vLoss.append(v_loss.item())
         opt_info.piLoss.append(pi_loss.item())
-        opt_info.invLoss(inv_loss.item())
-        opt_info.transLoss(trans_loss.item())
+        opt_info.invLoss.append(inv_loss.item())
+        opt_info.transLoss.append(trans_loss.item())
         opt_info.q1GradNorm.append(q1_grad_norm)
         opt_info.q2GradNorm.append(q2_grad_norm)
         opt_info.vGradNorm.append(v_grad_norm)

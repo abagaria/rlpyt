@@ -156,7 +156,7 @@ class EacAgent(BaseAgent):
         log_transition_prob = self.distribution.log_likelihood(next_observation, dist_info)
         return log_transition_prob, dist_info
 
-    def transition_sample(observation, prev_action, prev_reward, action):
+    def transition_sample(self, observation, prev_action, prev_reward, action):
         model_inputs = buffer_to((observation, action, prev_reward), device=self.device)
         mean, log_std = self.trans_model(*model_inputs)
         dist_info = DistInfoStd(mean=mean, log_std=log_std)
