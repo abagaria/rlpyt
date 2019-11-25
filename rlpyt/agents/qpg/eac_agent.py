@@ -53,6 +53,7 @@ class EacAgent(BaseAgent):
         super().__init__(ModelCls=ModelCls, model_kwargs=model_kwargs,
             initial_model_state_dict=initial_model_state_dict)
         save__init__args(locals())
+        self.state_distribution = None
         self.min_itr_learn = 0  # Get from algo.
 
     def initialize(self, env_spaces, share_memory=False,
@@ -74,12 +75,17 @@ class EacAgent(BaseAgent):
         if self.initial_model_state_dict is not None:
             self.load_state_dict(self.initial_model_state_dict)
         assert len(env_spaces.action.shape) == 1
+
+        # Gaussian distribution for predicting actions
         self.distribution = Gaussian(
             dim=env_spaces.action.shape[0],
             squash=self.action_squash,
             min_std=np.exp(MIN_LOG_STD),
             max_std=np.exp(MAX_LOG_STD),
         )
+
+        # Gaussian distribution for predicting states
+        self.state_distribution = Gaussian(dim=env_spaces.observation.shape[0])
 
     def to_device(self, cuda_idx=None):
         super().to_device(cuda_idx)
@@ -139,28 +145,30 @@ class EacAgent(BaseAgent):
         target_v = self.target_v_model(*model_inputs)
         return target_v.cpu()
 
-    #inverse dynamics
-    def inv(self, observation, prev_action, prev_reward, next_observation):
+    # inverse dynamics
+    def inv(self, observation, prev_action, prev_reward, next_observation, new_action):
+        """ Compute the log-likelihood of the action sampled from the current policy. """
         model_inputs = buffer_to((observation, prev_action, prev_reward, next_observation), device=self.device)
         mean, log_std = self.inv_model(*model_inputs)
         dist_info = DistInfoStd(mean=mean, log_std=log_std)
-        action, log_inv = self.distribution.sample_loglikelihood(dist_info)
-        return action, log_inv, dist_info
+        log_inv = self.distribution.log_likelihood(new_action, dist_info)
+        return log_inv.cpu(), dist_info
 
-    #transition dynamics
+    # transition dynamics
     def transition(self, observation, prev_action, prev_reward, next_observation, next_action, next_reward):
         model_inputs = buffer_to((observation, prev_action, prev_reward), device=self.device)
         mean, log_std = self.trans_model(*model_inputs)
+        log_std = log_std.to(mean.device)
         dist_info = DistInfoStd(mean=mean, log_std=log_std)
-        #sample_state, sample_log_trans = self.distribution.sample_loglikelihood(dist_info)
-        log_transition_prob = self.distribution.log_likelihood(next_observation, dist_info)
-        return log_transition_prob, dist_info
+        log_transition_prob = self.state_distribution.log_likelihood(next_observation, dist_info)
+        return log_transition_prob.cpu(), dist_info
 
     def transition_sample(self, observation, prev_action, prev_reward, action):
         model_inputs = buffer_to((observation, action, prev_reward), device=self.device)
         mean, log_std = self.trans_model(*model_inputs)
+        log_std = log_std.to(mean.device)
         dist_info = DistInfoStd(mean=mean, log_std=log_std)
-        sample_state, sample_log_trans = self.distribution.sample_loglikelihood(dist_info)
+        sample_state, sample_log_trans = self.state_distribution.sample_loglikelihood(dist_info)
         return sample_state, sample_log_trans, dist_info
 
     @torch.no_grad()

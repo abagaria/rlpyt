@@ -16,6 +16,7 @@ from rlpyt.distributions.gaussian import Gaussian
 from rlpyt.distributions.gaussian import DistInfo as GaussianDistInfo
 from rlpyt.utils.tensor import valid_mean
 from rlpyt.algos.utils import valid_from_done
+from tensorboardX import SummaryWriter
 
 
 OptInfo = namedtuple("OptInfo",
@@ -53,14 +54,17 @@ class EAC(RlAlgorithm):
             n_step_return=1,
             updates_per_sync=1,  # For async mode only.
             bootstrap_timelimit=True,
+            target_entropy="auto",  # TODO: Is this not needed in EAC?
             ):
         if optim_kwargs is None:
             optim_kwargs = dict()
         assert action_prior in ["uniform", "gaussian"]
+        print("Using {} action prior".format(action_prior))
         self._batch_size = batch_size
         del batch_size  # Property.
         self._alpha = alpha
         self._beta = beta
+        self.writer = SummaryWriter()
         save__init__args(locals())
 
     def initialize(self, agent, n_itr, batch_spec, mid_batch_reset, examples,
@@ -145,7 +149,7 @@ class EAC(RlAlgorithm):
             return opt_info
         for _ in range(self.updates_per_optimize):
             samples_from_replay = self.replay_buffer.sample_batch(self.batch_size)
-            losses, values = self.loss(samples_from_replay)
+            losses, values, pi_grad_norm = self.loss(samples_from_replay)
             q1_loss, q2_loss, v_loss, pi_loss, inv_loss, trans_loss = losses
 
             self.v_optimizer.zero_grad()
@@ -154,11 +158,7 @@ class EAC(RlAlgorithm):
                 self.clip_grad_norm)
             self.v_optimizer.step()
 
-            self.pi_optimizer.zero_grad()
-            pi_loss.backward(retain_graph=True)
-            pi_grad_norm = torch.nn.utils.clip_grad_norm_(self.agent.pi_parameters(),
-                self.clip_grad_norm)
-            self.pi_optimizer.step()
+            # TODO: Moved the backward for pi loss to self.loss()
 
             # Step Q's last because pi_loss.backward() uses them?
             self.q1_optimizer.zero_grad()
@@ -173,10 +173,10 @@ class EAC(RlAlgorithm):
                 self.clip_grad_norm)
             self.q2_optimizer.step()
 
-            #inverse dynamics optimizer
+            # inverse dynamics optimizer
             self.inv_optimizer.zero_grad()
             inv_loss.backward()
-            #do we need to do clipping?
+            # do we need to do clipping?
             inv_grad_norm = torch.nn.utils.clip_grad_norm_(self.agent.inv_parameters(), self.clip_grad_norm)
             self.inv_optimizer.step()
 
@@ -207,7 +207,7 @@ class EAC(RlAlgorithm):
     def loss(self, samples):
         """Samples have leading batch dimension [B,..] (but not time)."""
         agent_inputs, target_inputs, action = buffer_to(
-            (samples.agent_inputs, samples.target_inputs, samples.action))
+            (samples.agent_inputs, samples.target_inputs, samples.action), device=self.agent.device)
         q1, q2 = self.agent.q(*agent_inputs, action)
         with torch.no_grad():
             target_v = self.agent.target_v(*target_inputs)
@@ -229,14 +229,13 @@ class EAC(RlAlgorithm):
 
         v = self.agent.v(*agent_inputs)
         new_action, log_pi, (pi_mean, pi_log_std) = self.agent.pi(*agent_inputs)
-        if not self.reparameterize:
-            new_action = new_action.detach()  # No grad.
+
         log_target1, log_target2 = self.agent.q(*agent_inputs, new_action)
         min_log_target = torch.min(log_target1, log_target2)
         prior_log_pi = self.get_action_prior(new_action.cpu())
 
-        sampled_next_state, sampled_log_trans, _ = self.agent.transition_sample(*agent_inputs, new_action.detach())
-        _, log_inv, _ = self.agent.inv(*agent_inputs, sampled_next_state.detach())
+        sampled_next_state, sampled_log_trans, _ = self.agent.transition_sample(*agent_inputs, new_action)
+        log_inv, _ = self.agent.inv(*agent_inputs, sampled_next_state, new_action)
 
         v_target = (min_log_target + self._beta * log_inv - self._beta * (log_pi - prior_log_pi)).detach()  # No grad.
 
@@ -252,17 +251,28 @@ class EAC(RlAlgorithm):
                 0.5 * pi_mean ** 2 + 0.5 * pi_log_std ** 2, dim=-1)
         pi_loss = valid_mean(pi_losses, valid)
 
-        #inverse loss
+        # Note on detach():
+        # When computing pi-loss, we want to back-propagate through the transition model
+        # and the inverse dynamics model. However, when computing the transition loss and
+        # the inverse dynamics loss, we do NOT want to back-propagate through the policy
+        for _ in range(self.updates_per_optimize):
+            self.pi_optimizer.zero_grad()
+            pi_loss.backward()
+            pi_grad_norm = torch.nn.utils.clip_grad_norm_(self.agent.pi_parameters(), self.clip_grad_norm)
+            self.pi_optimizer.step()
 
+        # inverse loss: Needs another independent pass through the transition model
+        sampled_next_state, sampled_log_trans, _ = self.agent.transition_sample(*agent_inputs, new_action.detach())
+        log_inv, _ = self.agent.inv(*agent_inputs, sampled_next_state.detach(), new_action.detach())
         inv_loss = valid_mean(-log_inv, valid)
 
-        #transition loss
+        # transition loss
         log_prob_trans, _ = self.agent.transition(*agent_inputs, *target_inputs)
         trans_loss = valid_mean(-log_prob_trans, valid)
 
         losses = (q1_loss, q2_loss, v_loss, pi_loss, inv_loss, trans_loss)
         values = tuple(val.detach() for val in (q1, q2, v, pi_mean, pi_log_std))
-        return losses, values
+        return losses, values, pi_grad_norm
 
     # def q_loss(self, samples):
     #     """Samples have leading batch dimension [B,..] (but not time)."""
@@ -387,6 +397,13 @@ class EAC(RlAlgorithm):
         opt_info.piMu.extend(pi_mean[::10].numpy())
         opt_info.piLogStd.extend(pi_log_std[::10].numpy())
         opt_info.qMeanDiff.append(torch.mean(abs(q1 - q2)).item())
+
+        self.writer.add_scalar("Q1_Loss", q1_loss.item(), self.update_counter)
+        self.writer.add_scalar("Q2_Loss", q2_loss.item(), self.update_counter)
+        self.writer.add_scalar("V_Loss", v_loss.item(), self.update_counter)
+        self.writer.add_scalar("Pi_Loss", pi_loss.item(), self.update_counter)
+        self.writer.add_scalar("Inv_Loss", inv_loss.item(), self.update_counter)
+        self.writer.add_scalar("TransitionLoss", trans_loss.item(), self.update_counter)
 
     def optim_state_dict(self):
         return dict(

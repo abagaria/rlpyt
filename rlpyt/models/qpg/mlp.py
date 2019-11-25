@@ -72,7 +72,7 @@ class InverseDynamicsMlpModel(torch.nn.Module):
 
         lead_dim, T, B, _ = infer_leading_dims(observation,
             self._obs_ndim)
-        #concatenate observation s and next_observation s'
+        # concatenate observation s and next_observation s'
         input_mlp = torch.cat([observation.view(T * B, -1), next_observation.view(T * B, -1)], dim=1)
         output = self.mlp(input_mlp)
         mu, log_std = output[:, :self._action_size], output[:, self._action_size:]
