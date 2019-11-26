@@ -5,17 +5,17 @@ from rlpyt.utils.launching.variant import make_variants, VariantLevel
 
 script = "rlpyt/experiments/scripts/mujoco/qpg/train/mujoco_eac_serial.py"
 affinity_code = encode_affinity(
-    # n_cpu_core=2,
-    n_gpu=1,
-    # contexts_per_gpu=2,
+    n_cpu_core=8,
+    n_gpu=4,
+    contexts_per_gpu=2,
     # hyperthread_offset=2
 )
-runs_per_setting = 2
+runs_per_setting = 1
 default_config_key = "sac_1M_serial"
-experiment_title = "eac_mujoco_diff_distributions"
+experiment_title = "eac_mujoco_hc"
 variant_levels = list()
 
-env_ids = ["Hopper-v2"]  # , "Swimmer-v3"]
+env_ids = ["HalfCheetah-v2"]  #["Hopper-v2"]  # , "Swimmer-v3"]
 values = list(zip(env_ids))
 dir_names = ["env_{}".format(*v) for v in values]
 keys = [("env", "id")]
