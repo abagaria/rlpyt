@@ -23,6 +23,7 @@ from rlpyt.utils.launching.affinity import encode_affinity, quick_affinity_code
 from rlpyt.utils.launching.exp_launcher import run_experiments
 from rlpyt.utils.launching.variant import make_variants, VariantLevel
 
+from random import randint
 # Either manually set the resources for the experiment:
 affinity_code = encode_affinity(
     n_cpu_core=2,
@@ -39,12 +40,13 @@ runs_per_setting = 2
 experiment_title = "eac_replication"
 variant_levels = list()
 
-n_experiments = 5
+n_experiments = 4
 
 # Within a variant level, list each combination explicitly.
-seeds = [np.random.randint(100, 5000, 1) for _ in range(n_experiments)]
-values = list(zip(learning_rate, batch_B))
-dir_names = [experiment_title + "_{}lr_{}B".format(*v) for v in values]
+seeds = [randint(100, 100000) for _ in range(n_experiments)]
+print(seeds)
+values = list(zip(seeds))
+dir_names = [experiment_title + "_{}seed".format(*v) for v in values]
 keys = [("sampler", "seed")]
 variant_levels.append(VariantLevel(keys, values, dir_names))
 
@@ -59,10 +61,10 @@ variant_levels.append(VariantLevel(keys, values, dir_names))
 variants, log_dirs = make_variants(*variant_levels)
 
 run_experiments(
-    script="experiments/scripts/mujoco/train/mujoco_eac_serial.py",
+    script="./rlpyt/experiments/scripts/mujoco/qpg/train/mujoco_eac_serial.py",
     affinity_code=affinity_code,
     experiment_title=experiment_title,
     runs_per_setting=runs_per_setting,
     variants=variants,
-    log_dirs=log_dirs,
+    log_dirs=log_dirs
 )
