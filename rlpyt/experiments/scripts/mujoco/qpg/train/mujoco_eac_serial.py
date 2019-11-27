@@ -11,7 +11,7 @@ from rlpyt.runners.minibatch_rl import MinibatchRlEval
 from rlpyt.utils.logging.context import logger_context
 from rlpyt.utils.launching.variant import load_variant, update_config
 
-from rlpyt.experiments.configs.mujoco.qpg.mujoco_sac import configs
+from rlpyt.experiments.configs.mujoco.qpg.mujoco_eac import configs
 
 
 def build_and_train(slot_affinity_code, log_dir, run_ID, config_key):
