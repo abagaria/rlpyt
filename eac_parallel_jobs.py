@@ -66,5 +66,6 @@ run_experiments(
     experiment_title=experiment_title,
     runs_per_setting=runs_per_setting,
     variants=variants,
-    log_dirs=log_dirs
+    log_dirs=log_dirs,
+    common_args=("eac_500k_serial",)
 )
