@@ -28,6 +28,7 @@ config = dict(
     runner=dict(
         n_steps=5e5,
         log_interval_steps=1e4,
+        seed=137
     ),
     sampler=dict(
         batch_T=1,
@@ -35,8 +36,7 @@ config = dict(
         max_decorrelation_steps=0,
         eval_n_envs=4,
         eval_max_steps=int(51e3),
-        eval_max_trajectories=50,
-        seed=137
+        eval_max_trajectories=50
     ),
 )
 

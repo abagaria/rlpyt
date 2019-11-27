@@ -27,7 +27,7 @@ from random import randint
 # Either manually set the resources for the experiment:
 affinity_code = encode_affinity(
     n_cpu_core=2,
-    n_gpu=0,
+    n_gpu=2,
     # hyperthread_offset=8,  # if auto-detect doesn't work, number of CPU cores
     # n_socket=1,  # if auto-detect doesn't work, can force (or force to 1)
     cpu_per_run=1,
@@ -44,17 +44,16 @@ n_experiments = 4
 
 # Within a variant level, list each combination explicitly.
 seeds = [randint(100, 100000) for _ in range(n_experiments)]
-print(seeds)
 values = list(zip(seeds))
 dir_names = [experiment_title + "_{}seed".format(*v) for v in values]
-keys = [("sampler", "seed")]
+keys = [("runner", "seed")]
 variant_levels.append(VariantLevel(keys, values, dir_names))
 
 
 envs = ["HalfCheetah-v2", "Ant-v2"]
 values = list(zip(envs))
 dir_names = ["{}".format(*v) for v in values]
-keys = [("env", "game")]
+keys = [("env", "id")]
 variant_levels.append(VariantLevel(keys, values, dir_names))
 
 # Between variant levels, make all combinations.
