@@ -16,7 +16,7 @@ config = dict(
         ratio_clip=0.2,
         normalize_advantage=True,
         linear_lr_schedule=True,
-        bootstrap_timelimit=False,
+        #bootstrap_timelimit=False,
     ),
     env=dict(id="Hopper-v2"),
     model=dict(),
@@ -24,6 +24,7 @@ config = dict(
     runner=dict(
         n_steps=5e5,
         log_interval_steps=2048 * 10,
+        seed=None
     ),
     sampler=dict(
         batch_T=2048,
