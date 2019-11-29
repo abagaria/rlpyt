@@ -26,8 +26,9 @@ from rlpyt.utils.launching.variant import make_variants, VariantLevel
 from random import randint
 # Either manually set the resources for the experiment:
 affinity_code = encode_affinity(
-    n_cpu_core=4,
+    n_cpu_core=12,
     n_gpu=4,
+    contexts_per_gpu=3,
     # hyperthread_offset=8,  # if auto-detect doesn't work, number of CPU cores
     # n_socket=1,  # if auto-detect doesn't work, can force (or force to 1)
     cpu_per_run=1,
@@ -36,12 +37,12 @@ affinity_code = encode_affinity(
 # Or try an automatic one, but results may vary:
 # affinity_code = quick_affinity_code(n_parallel=None, use_gpu=True)
 
-runs_per_setting = 2
+runs_per_setting = 1
 experiment_title = "eac_replication"
 variant_levels = list()
 
 
-envs = ["HalfCheetah-v2"]
+envs = ["Walker2d-v2", "Humanoid-v2"]
 values = list(zip(envs))
 dir_names = ["{}".format(*v) for v in values]
 keys = [("env", "id")]
