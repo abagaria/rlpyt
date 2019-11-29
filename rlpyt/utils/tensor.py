@@ -34,7 +34,7 @@ def valid_mean(tensor, valid=None, dim=None):
     dim = () if dim is None else dim
     if valid is None and len(dim) > 0:
         return tensor.mean(dim=dim)
-    else if valid is None:
+    elif valid is None:
         return tensor.mean()
 
     valid = valid.type(tensor.dtype)  # Convert as needed.
