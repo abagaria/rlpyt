@@ -4,7 +4,7 @@ from rlpyt.utils.launching.exp_launcher import run_experiments
 from rlpyt.utils.launching.variant import make_variants, VariantLevel
 from random import randint
 
-script = "rlpyt/experiments/scripts/mujoco/pg/train/mujoco_ff_ppo_serial.py"
+script = "rlpyt/experiments/scripts/mujoco/pg/train/mujoco_ppo_serial.py"
 affinity_code = encode_affinity(
     n_cpu_core=12,
     n_gpu=4,
