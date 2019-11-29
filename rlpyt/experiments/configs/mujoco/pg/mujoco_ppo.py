@@ -18,7 +18,7 @@ config = dict(
         linear_lr_schedule=True,
         bootstrap_timelimit=False,
     ),
-    env=dict(id="Hopper-v3"),
+    env=dict(id="Hopper-v2"),
     model=dict(),
     optim=dict(),
     runner=dict(
@@ -34,12 +34,12 @@ config = dict(
 
 configs["ppo_500k_serial"] = config
 
-config = copy.deepcopy(configs["ppo_1M_serial"])
+config = copy.deepcopy(configs["ppo_500k_serial"])
 
-config = copy.deepcopy(configs["ppo_1M_serial"])
+config = copy.deepcopy(configs["ppo_500k_serial"])
 config["sampler"]["batch_B"] = 8
 config["sampler"]["batch_T"] = 256
-configs["ppo_1M_cpu"] = config
+configs["ppo_500k_cpu"] = config
 
 config["algo"]["minibatches"] = 1
 config["algo"]["epochs"] = 32
