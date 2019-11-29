@@ -22,7 +22,7 @@ config = dict(
     model=dict(),
     optim=dict(),
     runner=dict(
-        n_steps=1e6,
+        n_steps=5e5,
         log_interval_steps=2048 * 10,
     ),
     sampler=dict(
@@ -32,7 +32,7 @@ config = dict(
     ),
 )
 
-configs["ppo_1M_serial"] = config
+configs["ppo_500k_serial"] = config
 
 config = copy.deepcopy(configs["ppo_1M_serial"])
 
