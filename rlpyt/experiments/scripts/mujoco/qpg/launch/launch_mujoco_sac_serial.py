@@ -5,21 +5,31 @@ from rlpyt.utils.launching.variant import make_variants, VariantLevel
 
 script = "rlpyt/experiments/scripts/mujoco/qpg/train/mujoco_sac_serial.py"
 affinity_code = encode_affinity(
-    n_cpu_core=2,
-    n_gpu=1,
+    n_cpu_core=12,
+    n_gpu=4,
+    contexts_per_gpu=3,
     # hyperthread_offset=2,
     # n_socket=1,
-    # cpu_per_run=1,
+    cpu_per_run=1,
+    set_affinity=True
 )
-runs_per_setting = 2
+runs_per_setting = 1
 default_config_key = "sac_1M_serial"
 experiment_title = "sac_mujoco"
 variant_levels = list()
 
-env_ids = ["Ant-v2"]  # , "Swimmer-v3"]
+env_ids = ["Walker2d-v2", "Hopper-v2", "Humanoid-v2"]  # , "Swimmer-v3"]
 values = list(zip(env_ids))
 dir_names = ["env_{}_{}".format(*v, randint(0, 1000)) for v in values]
 keys = [("env", "id")]
+variant_levels.append(VariantLevel(keys, values, dir_names))
+
+n_experiments = 5
+# Within a variant level, list each combination explicitly.
+seeds = [randint(100, 100000) for _ in range(n_experiments)]
+values = list(zip(seeds))
+dir_names = [experiment_title + "_{}seed".format(*v) for v in values]
+keys = [("runner", "seed")]
 variant_levels.append(VariantLevel(keys, values, dir_names))
 
 variants, log_dirs = make_variants(*variant_levels)

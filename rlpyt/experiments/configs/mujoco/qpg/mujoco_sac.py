@@ -28,6 +28,7 @@ config = dict(
     runner=dict(
         n_steps=5e5,
         log_interval_steps=1e4,
+        seed=None
     ),
     sampler=dict(
         batch_T=1,
